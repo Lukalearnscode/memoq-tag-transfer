@@ -25,7 +25,7 @@
 ## Quick Start / 一键开始
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/memoq-tag-transfer.git
+git clone https://github.com/Lukalearnscode/memoq-tag-transfer.git
 cd memoq-tag-transfer
 bash setup.sh
 ```
