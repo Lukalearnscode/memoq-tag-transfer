@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.env
+*.mqxlz
+*.mqxliff
+*.tmx
+.DS_Store
+work_dir/
