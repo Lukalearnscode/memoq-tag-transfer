@@ -1,9 +1,8 @@
 # memoQ Tag Transfer
 
-**一句话说明 / TL;DR:**
 把 memoQ 文件里源文的颜色标签、技能链接等 inline tag 自动放到译文正确位置，输出 TMX 文件导入翻译记忆库。
 
-> Automatically transfer inline tags (colors, skill links, styles) from source to target in memoQ mqxlz files → output TMX → import into memoQ TM.
+Automatically transfer inline tags (colors, skill links, styles) from source to target in memoQ mqxlz files → output TMX → import into memoQ TM.
 
 ---
 
