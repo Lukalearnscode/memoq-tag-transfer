@@ -90,20 +90,20 @@ Place all tags into the target text. Output ONLY the tagged text."""
     )
     result = response.choices[0].message.content.strip()
 
-    expected_ids = {t["id"] for t in src_tags}
-    found_ids = set()
     import re
-    for m in re.finditer(r"\{(\d+)\}", result):
-        found_ids.add(m.group(1))
+    from collections import Counter
 
-    if found_ids != expected_ids:
-        missing = expected_ids - found_ids
-        extra = found_ids - expected_ids
+    expected = Counter(t["id"] for t in src_tags)
+    found = Counter(m.group(1) for m in re.finditer(r"\{(\d+)\}", result))
+
+    if found != expected:
+        missing = expected - found
+        extra = found - expected
         warnings = []
         if missing:
-            warnings.append(f"missing tags: {missing}")
+            warnings.append(f"missing tags: {dict(missing)}")
         if extra:
-            warnings.append(f"extra tags: {extra}")
+            warnings.append(f"extra tags: {dict(extra)}")
         result = f"⚠️ TAG MISMATCH ({', '.join(warnings)})\n{result}"
 
     return result

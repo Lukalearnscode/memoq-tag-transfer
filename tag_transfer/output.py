@@ -9,43 +9,51 @@ def escape_xml(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def get_ph_xml_str(src_el, ph_id):
-    """Extract clean XML string for <ph id=N> from a source element."""
+INLINE_TAG_NAMES = {"ph", "bpt", "ept", "x", "g"}
+
+
+def _clean_xmlns(raw):
+    raw = raw.replace(' xmlns="urn:oasis:names:tc:xliff:document:1.2"', "")
+    raw = re.sub(r' xmlns:ns\d+="[^"]*"', "", raw)
+    raw = re.sub(r"<ns\d+:", "<", raw)
+    raw = re.sub(r"</ns\d+:", "</", raw)
+    return raw
+
+
+def get_tag_xml_str(src_el, tag_id):
+    """Extract clean XML string for an inline tag by its id attribute."""
     for child in src_el:
         tag_name = etree.QName(child.tag).localname if "}" in child.tag else child.tag
-        if tag_name == "ph" and child.get("id") == str(ph_id):
+        if tag_name not in INLINE_TAG_NAMES:
+            continue
+        child_id = child.get("id") or child.get("i")
+        if child_id == str(tag_id):
             raw = etree.tostring(child, encoding="unicode", with_tail=False)
-            raw = raw.replace(' xmlns="urn:oasis:names:tc:xliff:document:1.2"', "")
-            raw = re.sub(r' xmlns:ns\d+="[^"]*"', "", raw)
-            raw = re.sub(r"<ns\d+:", "<", raw)
-            raw = re.sub(r"</ns\d+:", "</", raw)
-            return raw
+            return _clean_xmlns(raw)
     return ""
 
 
 def build_full_seg(el):
-    """Build complete seg content from a source element (text + ph XML)."""
+    """Build complete seg content from a source element (text + inline tag XML)."""
+    if el is None:
+        return ""
     parts = []
     if el.text:
         parts.append(escape_xml(el.text))
     for child in el:
         tag_name = etree.QName(child.tag).localname if "}" in child.tag else child.tag
-        if tag_name == "ph":
+        if tag_name in INLINE_TAG_NAMES:
             raw = etree.tostring(child, encoding="unicode", with_tail=False)
-            raw = raw.replace(' xmlns="urn:oasis:names:tc:xliff:document:1.2"', "")
-            raw = re.sub(r' xmlns:ns\d+="[^"]*"', "", raw)
-            raw = re.sub(r"<ns\d+:", "<", raw)
-            raw = re.sub(r"</ns\d+:", "</", raw)
-            parts.append(raw)
+            parts.append(_clean_xmlns(raw))
         if child.tail:
             parts.append(escape_xml(child.tail))
     return "".join(parts)
 
 
 def build_tmx_seg(src_el, template):
-    """Replace {N} placeholders in template with actual ph XML from source."""
+    """Replace {N} placeholders in template with actual tag XML from source."""
     def replacer(m):
-        return get_ph_xml_str(src_el, m.group(1))
+        return get_tag_xml_str(src_el, m.group(1))
     return re.sub(r"\{(\d+)\}", replacer, template)
 
 

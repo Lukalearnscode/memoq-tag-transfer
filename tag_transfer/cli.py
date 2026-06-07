@@ -7,7 +7,8 @@ import sys
 from .extract import extract_mqxlz, parse_mqxliff
 from .parse import extract_segments
 from .place import place_tags, get_client, get_model
-from .output import generate_tmx
+from .output import generate_tmx, build_full_seg, build_tmx_seg
+from .verify import verify_all, print_report
 
 
 def cmd_analyze(args):
@@ -72,6 +73,7 @@ def cmd_transfer(args):
             else:
                 print("OK")
             results.append({
+                "id": seg["id"],
                 "src_el": seg["src_el"],
                 "src_text": seg["src_text"],
                 "tgt_template": tagged.split("\n")[-1],
@@ -85,10 +87,42 @@ def cmd_transfer(args):
         generate_tmx(results, output_path, args.src_lang, args.tgt_lang)
         print(f"\nTMX written: {output_path} ({len(results)} segments)")
 
+        verify_pairs = []
+        for r in results:
+            verify_pairs.append({
+                "id": r.get("id", ""),
+                "source": build_full_seg(r["src_el"]),
+                "target": build_tmx_seg(r["src_el"], r["tgt_template"]),
+            })
+        total, crit, warn, issues = verify_all(verify_pairs)
+        print_report(total, crit, warn, issues)
+
     if errors:
         print(f"\n⚠️  {len(errors)} segments had issues:")
         for row, msg in errors:
             print(f"  Row {row}: {msg[:100]}")
+
+
+def cmd_verify(args):
+    """Verify tag consistency in an mqxlz file (source vs target)."""
+    mqxliff_path = extract_mqxlz(args.input, args.work_dir)
+    _, units = parse_mqxliff(mqxliff_path)
+    segments = extract_segments(units)
+
+    start = args.start - 1 if args.start else 0
+    end = args.end if args.end else len(segments)
+    selected = segments[start:end]
+
+    pairs = []
+    for seg in selected:
+        pairs.append({
+            "id": seg["id"],
+            "source": build_full_seg(seg["src_el"]),
+            "target": build_full_seg(seg["tgt_el"]) if seg["tgt_el"] is not None else "",
+        })
+
+    total, crit, warn, issues = verify_all(pairs)
+    print_report(total, crit, warn, issues)
 
 
 def main():
@@ -115,11 +149,20 @@ def main():
     p_transfer.add_argument("--tgt-lang", default="en-US", help="Target language (default: en-US)")
     p_transfer.add_argument("--work-dir", help="Temp directory for extraction")
 
+    # verify
+    p_verify = sub.add_parser("verify", help="Verify tag consistency in source vs target")
+    p_verify.add_argument("input", help="Path to .mqxlz file")
+    p_verify.add_argument("--start", type=int, help="Start row (1-based)")
+    p_verify.add_argument("--end", type=int, help="End row (inclusive)")
+    p_verify.add_argument("--work-dir", help="Temp directory for extraction")
+
     args = parser.parse_args()
     if args.command == "analyze":
         cmd_analyze(args)
     elif args.command == "transfer":
         cmd_transfer(args)
+    elif args.command == "verify":
+        cmd_verify(args)
     else:
         parser.print_help()
 

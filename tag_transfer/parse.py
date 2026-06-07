@@ -65,6 +65,35 @@ def _infer_unknown_tag(displaytext):
     return ("unknown", displaytext)
 
 
+def _process_inline_tag(child, parts, tags):
+    """Process a single inline tag element (ph, bpt, ept, x, g)."""
+    tag_name = etree.QName(child.tag).localname if "}" in child.tag else child.tag
+
+    if tag_name == "ph":
+        tid = child.get("id", "?")
+        tag_type, detail = classify_tag(child)
+        parts.append(f"{{{tid}}}")
+        tags.append({"id": tid, "type": tag_type, "detail": detail, "tag_name": "ph"})
+    elif tag_name == "bpt":
+        tid = child.get("id", child.get("i", "?"))
+        inner = child.text or ""
+        parts.append(f"{{{tid}}}")
+        tags.append({"id": tid, "type": "bpt", "detail": f"paired tag open: {inner[:40]}", "tag_name": "bpt"})
+    elif tag_name == "ept":
+        tid = child.get("id", child.get("i", "?"))
+        inner = child.text or ""
+        parts.append(f"{{{tid}}}")
+        tags.append({"id": tid, "type": "ept", "detail": f"paired tag close: {inner[:40]}", "tag_name": "ept"})
+    elif tag_name == "x":
+        tid = child.get("id", "?")
+        parts.append(f"{{{tid}}}")
+        tags.append({"id": tid, "type": "standalone", "detail": "standalone placeholder", "tag_name": "x"})
+    elif tag_name == "g":
+        tid = child.get("id", "?")
+        parts.append(f"{{{tid}}}")
+        tags.append({"id": tid, "type": "g_open", "detail": "group tag open", "tag_name": "g"})
+
+
 def simplify_segment(el):
     """Convert a source/target element to simplified text with {N} placeholders.
 
@@ -82,13 +111,7 @@ def simplify_segment(el):
     for child in el:
         tag_name = etree.QName(child.tag).localname if "}" in child.tag else child.tag
 
-        if tag_name == "ph":
-            tid = child.get("id", "?")
-            tag_type, detail = classify_tag(child)
-            parts.append(f"{{{tid}}}")
-            tags.append({"id": tid, "type": tag_type, "detail": detail})
-        elif tag_name == "mrk":
-            # Revision marks: keep "ins", skip "del"
+        if tag_name == "mrk":
             tctype = child.get("{MQXliff}tctype", "")
             if tctype == "del":
                 pass
@@ -96,18 +119,11 @@ def simplify_segment(el):
                 if child.text:
                     parts.append(child.text)
                 for sub in child:
-                    sub_tag = (
-                        etree.QName(sub.tag).localname
-                        if "}" in sub.tag
-                        else sub.tag
-                    )
-                    if sub_tag == "ph":
-                        stid = sub.get("id", "?")
-                        st, sd = classify_tag(sub)
-                        parts.append(f"{{{stid}}}")
-                        tags.append({"id": stid, "type": st, "detail": sd})
+                    _process_inline_tag(sub, parts, tags)
                     if sub.tail:
                         parts.append(sub.tail)
+        else:
+            _process_inline_tag(child, parts, tags)
 
         if child.tail:
             parts.append(child.tail)
