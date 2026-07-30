@@ -94,8 +94,8 @@ def cmd_transfer(args):
                 "source": build_full_seg(r["src_el"]),
                 "target": build_tmx_seg(r["src_el"], r["tgt_template"]),
             })
-        total, crit, warn, issues = verify_all(verify_pairs)
-        print_report(total, crit, warn, issues)
+        issues = verify_all(verify_pairs)
+        print_report(verify_pairs, issues)
 
     if errors:
         print(f"\n⚠️  {len(errors)} segments had issues:")
@@ -121,8 +121,16 @@ def cmd_verify(args):
             "target": build_full_seg(seg["tgt_el"]) if seg["tgt_el"] is not None else "",
         })
 
-    total, crit, warn, issues = verify_all(pairs)
-    print_report(total, crit, warn, issues)
+    issues = verify_all(pairs)
+    print_report(pairs, issues)
+
+    # Optional: semantic-position report. verify_all proves the tags are all
+    # there; this proves they wrap the right words. Separate flag because it
+    # produces a long markdown table meant for human review, not a pass/fail.
+    if getattr(args, "semantic_report", None):
+        from .semantic_report import write_report
+        write_report(pairs, args.semantic_report)
+        print(f"\nSemantic-position report written: {args.semantic_report}")
 
 
 def main():
@@ -155,6 +163,10 @@ def main():
     p_verify.add_argument("--start", type=int, help="Start row (1-based)")
     p_verify.add_argument("--end", type=int, help="End row (inclusive)")
     p_verify.add_argument("--work-dir", help="Temp directory for extraction")
+    p_verify.add_argument(
+        "--semantic-report", metavar="PATH",
+        help="Also write a markdown table of what each tag pair wraps in source vs target",
+    )
 
     args = parser.parse_args()
     if args.command == "analyze":

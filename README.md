@@ -33,6 +33,9 @@ memoq-tag-transfer transfer your_file.mqxlz
 
 # Verify tag consistency / 验证 tag 完整性
 memoq-tag-transfer verify your_file.mqxlz
+
+# Verify + report what each tag pair actually wraps / 顺带导出 tag 语义位置对照表
+memoq-tag-transfer verify your_file.mqxlz --semantic-report report.md
 ```
 
 Output is a `.tmx` file. Import it into memoQ as a local Translation Memory, then pre-translate.
@@ -49,8 +52,33 @@ Output is a `.tmx` file. Import it into memoQ as a local Translation Memory, the
 1. **Extract** — unzip the mqxlz, read the XML
 2. **Parse** — identify each tag's type (color, link, style, etc.)
 3. **Place** — send source tags + plain translation to an LLM, it inserts tags at correct positions
-4. **Verify** — check every segment: tag count, content, nesting, order
+4. **Verify** — check every segment: tag count (Counter-based), tag content after
+   normalization, structural nesting (stack validation), and tag order
 5. **Output** — generate TMX file
+
+### The check that mechanical verification misses / 机械校验抓不到的那一类错
+
+Tag count, content and order can all be correct while the tags wrap the wrong
+words: source has `{green}40{/green}` around a number, target has the same pair
+around a verb. Every mechanical check passes; the output is still wrong.
+
+数量、内容、顺序全对，tag 却包错了词——源文 `{green}40{/green}` 包的是数值，
+译文同一对 tag 包了动词。所有机械校验都过，结果仍然是错的。
+
+`--semantic-report` writes a side-by-side table of what each tag pair wraps in
+source vs target, flags mismatched numbers automatically, and leaves the rest
+for human review.
+
+## Tests / 测试
+
+```bash
+python3 tests/test_verify.py
+```
+
+Regression tests for BBCode coverage, bracket false-positives, and the number
+regex. Each test exists because the corresponding bug reached a real file.
+
+每个测试都对应一个真实踩过的坑，不是为了覆盖率写的。
 
 ## Configuration / 配置
 

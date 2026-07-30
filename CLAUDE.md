@@ -21,7 +21,13 @@ extract.py → parse.py → place.py → verify.py → output.py
 4. `verify.py` — Post-placement verification: tag count, content (Counter-based exact match), nesting (stack validation for bpt/ept and g pairs), structural tag order, placeholder order.
 5. `output.py` — Replaces `{N}` placeholders with real tag XML from source. Generates TMX.
 
+Plus one module outside the linear pipeline:
+
+- `semantic_report.py` — Catches the error class `verify.py` structurally cannot: tags all present, correct count, correct order, but wrapped around the wrong words. Lists what each tag pair wraps in source vs target. Exposed as `verify --semantic-report PATH`.
+
 Entry point: `cli.py` (three subcommands: `analyze`, `transfer`, `verify`).
+
+Tests: `python3 tests/test_verify.py` — plain script, no pytest needed, auto-discovers `test_*` functions in its own module namespace (a hardcoded call list silently skips new tests).
 
 ## Key constraints — read before making changes
 
@@ -32,6 +38,8 @@ Entry point: `cli.py` (three subcommands: `analyze`, `transfer`, `verify`).
 - **mrk revision marks** — `mq:tctype="del"` content must be skipped, `"ins"` content must be kept. Never mix them.
 - **Single-segment API calls** — batch calls produce unreliable tag placement. Process one segment at a time.
 - **Tag verification from original source** — always read tags from the original zip/mqxliff, never from intermediate parsed files.
+- **Never hardcode API keys** — read from environment / `.env` only. Do not leave a key as a fallback default (`os.environ.get("KEY", "sk-...")` looks safe and is not).
+- **When syncing code in from a private pipeline** — `verify.py`, `semantic_report.py` and `tests/` originate from a private localization pipeline. Anything ported in must be scrubbed of client and project names before commit. Comments that cite a real bug should keep the lesson and drop the identifier: "on a real 525-tag file", not the game's name. Grep the diff for client names before pushing, not after.
 
 ## Supported inline tag types
 
