@@ -1,0 +1,4 @@
+[
+  {"source": "攻击力", "target": "ATK"},
+  {"source": "金币", "target": "Gold|Coins"}
+]

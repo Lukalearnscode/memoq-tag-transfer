@@ -1,0 +1,8 @@
+[
+  {"id": "1", "source": "消耗<style=\"accent-gn\">40</style>点能量", "target": "Consumes <style=\"accent-gn\">40</style> Energy"},
+  {"id": "2", "source": "获得[gold]金币[/gold]", "target": "Gain [gold]Gold[/gold]"},
+  {"id": "3", "source": "选择{Amount}件物品", "target": "Pick {Amount:plural:an item|{} items}"},
+  {"id": "4", "source": "<b>攻击力</b>提升", "target": "<b>Speed</b> up"},
+  {"id": "5", "source": "按<b>确认</b>继续", "target": "Press Confirm to continue"},
+  {"id": "6", "source": "DO NOT TRANSLATE", "target": "", "translatable": false}
+]
