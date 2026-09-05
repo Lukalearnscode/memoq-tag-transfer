@@ -9,6 +9,7 @@ its words.
 Run: python3 tests/test_verify.py   (no pytest needed)
 """
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -487,6 +488,40 @@ def test_verify_cli_glossary_reaches_semantic_report():
                  "--semantic-report", str(td / "r.md"))
         assert r.returncode == 0, r.stdout + r.stderr
         assert "term mismatch" in (td / "r.md").read_text(encoding="utf-8")
+
+
+# ── The README gallery ───────────────────────────────────────────────────
+
+def test_examples_file_is_a_working_demo():
+    """examples/pairs.json is the README's "it looks fine, it is not" gallery.
+
+    If a change to verify.py or semantic_report.py stops any of the six cases
+    from firing, the README starts promising something the tool no longer
+    does. This test is what notices.
+    """
+    pairs = pairs_io.load_pairs(REPO / "examples" / "pairs.json", normalize=True)
+    vt.set_custom_tags([])
+    try:
+        issues = vt.verify_all(pairs)
+    finally:
+        vt.set_custom_tags([])
+    kinds = {}
+    for i in issues:
+        kinds.setdefault(i.seg_id, set()).add(i.issue_type)
+    assert "TAG_COUNT_MISMATCH" in kinds.get("5", set()), kinds     # 4: custom tag lost
+    assert "TAG_NESTING_ERROR" in kinds.get("6", set()), kinds      # 5: crossed
+    assert kinds.get("7") == {"ICU_CONDITIONAL_DROPPED"}, kinds     # 6: warning only
+    for quiet in ("1", "2", "3", "4", "8"):
+        assert quiet not in kinds, (quiet, kinds.get(quiet))       # mechanical checks stay silent
+
+    gloss = pairs_io.load_glossary(REPO / "examples" / "glossary.json")
+    report = tsr.build_report(pairs, gloss)
+    sections = dict(re.findall(r"## Segment (\d+)\n(.*?)(?=\n## |\Z)", report, re.S))
+    assert "number mismatch" in sections["2"], sections["2"]        # 1
+    assert "shrunk" in sections["3"], sections["3"]                 # 2
+    assert "empty target span" in sections["4"], sections["4"]      # 3
+    assert "term mismatch" in sections["8"], sections["8"]          # glossary demo
+    assert "⚠️" not in sections["1"] and "❌" not in sections["1"], sections["1"]
 
 
 if __name__ == "__main__":

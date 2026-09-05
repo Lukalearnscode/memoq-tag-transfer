@@ -28,7 +28,7 @@ Two modules outside the linear pipeline:
 
 Entry point: `cli.py` (three subcommands: `analyze`, `transfer`, `verify`). `place.py` (and therefore the `openai` package) is imported lazily inside `transfer`, so `analyze` and `verify` work without an API key.
 
-Tests: `python3 tests/test_verify.py` — plain script, no pytest needed, auto-discovers `test_*` functions in its own module namespace (a hardcoded call list silently skips new tests). 47 tests. Every example segment in the tests is made up; it keeps the shape of a real bug, not the real words.
+Tests: `python3 tests/test_verify.py` — plain script, no pytest needed, auto-discovers `test_*` functions in its own module namespace (a hardcoded call list silently skips new tests). 48 tests. Every example segment in the tests is made up; it keeps the shape of a real bug, not the real words. `test_examples_file_is_a_working_demo` runs `examples/pairs.json` and asserts each README gallery case still fires; keep it in sync when editing either.
 
 ## What verify checks
 

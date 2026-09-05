@@ -1,8 +1,11 @@
 [
   {"id": "1", "source": "消耗<style=\"accent-gn\">40</style>点能量", "target": "Consumes <style=\"accent-gn\">40</style> Energy"},
-  {"id": "2", "source": "获得[gold]金币[/gold]", "target": "Gain [gold]Gold[/gold]"},
-  {"id": "3", "source": "选择{Amount}件物品", "target": "Pick {Amount:plural:an item|{} items}"},
-  {"id": "4", "source": "<b>攻击力</b>提升", "target": "<b>Speed</b> up"},
-  {"id": "5", "source": "按<b>确认</b>继续", "target": "Press Confirm to continue"},
-  {"id": "6", "source": "DO NOT TRANSLATE", "target": "", "translatable": false}
+  {"id": "2", "source": "造成<color=#ff0000>150</color>点伤害", "target": "Deals 150 <color=#ff0000>Damage</color>"},
+  {"id": "3", "source": "队伍会跟随<color=#ffe2af>当前队长</color>的移动", "target": "The party follows the current <color=#ffe2af>leader</color>"},
+  {"id": "4", "source": "使<style=\"q5\">燃烧</style>的时间延长", "target": "extends <style=\"q5\"></style>Burning duration"},
+  {"id": "5", "source": "获得[gold]护盾[/gold]", "target": "Gain Shield"},
+  {"id": "6", "source": "[gold]金币[/gold]和[blue]宝石[/blue]", "target": "[gold]Gold[/blue] and [blue]Gems[/gold]"},
+  {"id": "7", "source": "Pick {Amount:plural:an item|{} items} to sell.", "target": "选择{Amount}件物品出售。"},
+  {"id": "8", "source": "<b>攻击力</b>提升", "target": "<b>Speed</b> up"},
+  {"id": "9", "source": "DO NOT TRANSLATE", "target": "", "translatable": false}
 ]

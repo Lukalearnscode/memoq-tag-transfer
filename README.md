@@ -54,13 +54,89 @@ memoq-tag-transfer verify --pairs examples/pairs.json --tags shake,pause
 ```
 
 Exit code: `0` clean, `1` at least one CRITICAL, `2` the input file could not be used.
-The example file `examples/pairs.json` contains one deliberate error, so it exits `1`.
+The example file `examples/pairs.json` contains several deliberate errors (the six cases below), so it exits `1`.
 
-退出码：`0` 干净，`1` 有 CRITICAL，`2` 输入文件读不了。示例文件故意放了一处错，所以会退出 `1`。
+退出码：`0` 干净，`1` 有 CRITICAL，`2` 输入文件读不了。示例文件故意放了几处错（就是下面六段），所以会退出 `1`。
 
 Output of `transfer` is a `.tmx` file. Import it into memoQ as a local Translation Memory, then pre-translate.
 
 `transfer` 输出 `.tmx` 文件，导入 memoQ 本地翻译记忆库，然后预翻译即可。
+
+## It looks fine. It is not. / 看起来没问题，其实是错的
+
+Six short segments. Read each pair and decide whether the translation is right. Then read what the tool says. All six are in `examples/pairs.json`, so you can run this yourself:
+
+```bash
+memoq-tag-transfer verify --pairs examples/pairs.json --glossary examples/glossary.json --semantic-report report.md
+```
+
+六段短句。先自己判断译文对不对，再看工具怎么说。六段都在 `examples/pairs.json` 里，上面这条命令自己就能跑。
+
+**1. The number is right. The colour is on the wrong word. / 数字对了，颜色包错了词**
+
+```
+源文: 造成<color=#ff0000>150</color>点伤害        ← red around the number
+译文: Deals 150 <color=#ff0000>Damage</color>    ← red around "Damage"
+```
+
+Same tags, same count, same order. Every mechanical check passes. The side-by-side table says **number mismatch**: the source span holds "150", the target span holds no number.
+
+标签一样、数量一样、顺序一样，机械检查全过。对照表报：**数字不一致**，源文标签包的是 150，译文标签里一个数字都没有。
+
+**2. The highlight got shorter. / 高亮变短了**
+
+```
+源文: 队伍会跟随<color=#ffe2af>当前队长</color>的移动
+译文: The party follows the current <color=#ffe2af>leader</color>
+```
+
+"current" fell outside the tag. The table says **span may have shrunk**: four Chinese characters went in, one English word came out.
+
+「current」掉到了标签外面。对照表报：**跨度可能缩小**，进去四个汉字，出来一个英文词。
+
+**3. The tags are there. Nothing is inside them. / 标签在，里面是空的**
+
+```
+源文: 使<style="q5">燃烧</style>的时间延长
+译文: extends <style="q5"></style>Burning duration
+```
+
+Count, order and nesting are all legal. The table says **empty target span**: "Burning" sits right after the closing tag instead of between the pair.
+
+数量、顺序、嵌套全合法。对照表报：**译文标签里是空的**，Burning 紧贴在闭合标签后面，没进到标签中间。
+
+**4. A tag the tool has never heard of went missing. / 一个工具没见过的标签丢了**
+
+```
+源文: 获得[gold]护盾[/gold]
+译文: Gain Shield
+```
+
+`[gold]` is not on any standard list, so a whitelist-only checker never sees it. This tool notices that `[gold]` and `[/gold]` both appear in the batch, treats the name as a tag, and reports **2 tags missing**.
+
+`[gold]` 不在任何标准名单上，只认白名单的检查器看不见它。这个工具发现整批文字里 `[gold]` 和 `[/gold]` 都出现过，就把它当标签，报：**丢了 2 个标签**。
+
+**5. Every tag is present. They are crossed. / 标签一个不少，交叉了**
+
+```
+源文: [gold]金币[/gold]和[blue]宝石[/blue]
+译文: [gold]Gold[/blue] and [blue]Gems[/gold]
+```
+
+The same four tags on both sides, so a count check passes. The nesting check says **crossed nesting: [gold] was closed by [/blue]**. A game engine draws this wrong or crashes on it.
+
+两边都是这四个标签，数数能过。嵌套检查报：**交叉嵌套，[gold] 被 [/blue] 关掉了**。游戏引擎画这一句会出错，或者直接崩。
+
+**6. This one is not an error, and the tool knows. / 这一个不是错，工具也知道**
+
+```
+源文: Pick {Amount:plural:an item|{} items} to sell.
+译文: 选择{Amount}件物品出售。
+```
+
+The English variable chooses between "an item" and "N items" at runtime. Chinese has no plural, so the translator collapsed it to `{Amount}`. A strict checker calls this a lost tag. This tool gives a **warning to glance at**, not an error. On one real game's official translation, that single difference was over 800 false alarms.
+
+英文变量在运行时从「an item」和「N items」里选一个显示。中文没有单复数，译员把它收成 `{Amount}`。死板的检查器会说标签丢了。这个工具只给一句**提醒**，不当错误。在一款游戏的官方译文上，这一条差别就是八百多条假警报。
 
 ## How it works / 工作原理
 
@@ -145,9 +221,9 @@ No flag does not mean pass. It means the machine has nothing to say and a person
 python3 tests/test_verify.py
 ```
 
-47 regression tests, no pytest needed. Each one exists because the corresponding bug reached a real file. The example segments in the tests are made up; they keep the shape of the real ones, not the words.
+48 regression tests, no pytest needed. Each one exists because the corresponding bug reached a real file. The example segments in the tests are made up; they keep the shape of the real ones, not the words. One test runs `examples/pairs.json` and checks that every case above still fires.
 
-47 个回归测试，不需要 pytest。每个测试都对应一个真实踩过的坑，不是为了覆盖率写的。测试里的例句是编的，保留真实句子的形状，不保留原话。
+48 个回归测试，不需要 pytest。其中一条专门跑 `examples/pairs.json`，确认上面六段每一段都还能报出来。每个测试都对应一个真实踩过的坑，不是为了覆盖率写的。测试里的例句是编的，保留真实句子的形状，不保留原话。
 
 ## Configuration / 配置
 
