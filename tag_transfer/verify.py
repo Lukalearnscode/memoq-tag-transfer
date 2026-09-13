@@ -36,6 +36,8 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
+from .pairs_io import PairsError
+
 # ============================================================
 # Tag patterns
 # ============================================================
@@ -92,6 +94,10 @@ GENERIC_PATTERNS = [
 #   2. --tags gold,blue: for self-closing custom tags, which have no closing
 #      mate and therefore cannot be auto-detected.
 _CUSTOM_BBCODE: set = set()
+# What the last verify_all() auto-detected. Display only — print_report shows
+# it, nothing branches on it. The set that drives verification is restored
+# after every batch, see verify_all.
+_LAST_AUTO_DETECTED: set = set()
 _BBCODE_PAIR_RE = re.compile(r'\[/?([A-Za-z_][\w-]{0,29})\b(?:=[^\]]*)?\]')
 
 
@@ -714,22 +720,39 @@ def verify_all(pairs: list, auto_detect_tags: bool = True) -> list:
     By default the whole batch is scanned first, and any square-bracket name
     that appears both as [x] and [/x] is added to the custom tag set.
     """
-    if auto_detect_tags:
-        found = detect_paired_bbcode(
-            [t for p in pairs for t in (p.get("source", ""), p.get("target", ""))])
-        if found:
-            set_custom_tags(_CUSTOM_BBCODE | found)
-    all_issues = []
-    for pair in pairs:
-        issues = verify_segment(
-            pair.get("id", "unknown"),
-            pair["source"],
-            pair["target"],
-        )
-        issues += check_break_padding(
-            pair.get("id", "unknown"), pair["source"], pair["target"])
-        all_issues.extend(issues)
-    return all_issues
+    global _LAST_AUTO_DETECTED
+    explicit = custom_tags()          # what --tags set; survives this batch
+    _LAST_AUTO_DETECTED = set()
+    try:
+        if auto_detect_tags:
+            found = detect_paired_bbcode(
+                [t for p in pairs for t in (p.get("source", ""), p.get("target", ""))])
+            if found:
+                _LAST_AUTO_DETECTED = set(found)
+                set_custom_tags(explicit | found)
+        all_issues = []
+        for pair in pairs:
+            seg_id = pair.get("id", "unknown")
+            # Not .get(..., ""): a dropped key would then read as "no tags on
+            # either side" and the segment would be reported clean. That silent
+            # pass is the failure pairs_io.py exists to prevent, and callers
+            # that build pairs themselves never go through pairs_io.
+            for key in ("source", "target"):
+                if not isinstance(pair.get(key), str):
+                    raise PairsError(
+                        f"segment {seg_id!r} has no string {key!r}. A missing key is "
+                        f"the shape of a pipeline dropping data, not of an empty segment"
+                    )
+            source, target = pair["source"], pair["target"]
+            issues = verify_segment(seg_id, source, target)
+            issues += check_break_padding(seg_id, source, target)
+            all_issues.extend(issues)
+        return all_issues
+    finally:
+        # Names detected from this batch's text describe this batch only.
+        # Without restoring, a second batch in the same process inherits them
+        # and reports tags the caller never asked about.
+        set_custom_tags(explicit)
 
 
 # ============================================================
@@ -905,8 +928,9 @@ def print_report(pairs: list, issues: list):
     print("=" * 60)
     print(f"Segments: {total}")
     print(f"Passed: {clean}  |  CRITICAL: {critical}  |  WARNING: {warning}")
-    if _CUSTOM_BBCODE:
-        print(f"Custom tags in effect: {', '.join(sorted(_CUSTOM_BBCODE))}")
+    effective = _CUSTOM_BBCODE | _LAST_AUTO_DETECTED
+    if effective:
+        print(f"Custom tags in effect: {', '.join(sorted(effective))}")
     print("-" * 60)
 
     if not issues:

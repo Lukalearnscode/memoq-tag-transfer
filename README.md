@@ -221,9 +221,9 @@ No flag does not mean pass. It means the machine has nothing to say and a person
 python3 tests/test_verify.py
 ```
 
-48 regression tests, no pytest needed. Each one exists because the corresponding bug reached a real file. The example segments in the tests are made up; they keep the shape of the real ones, not the words. One test runs `examples/pairs.json` and checks that every case above still fires.
+63 regression tests, no pytest needed. Each one exists because the corresponding bug reached a real file. The example segments in the tests are made up; they keep the shape of the real ones, not the words. One test runs `examples/pairs.json` and checks that every case above still fires.
 
-48 个回归测试，不需要 pytest。其中一条专门跑 `examples/pairs.json`，确认上面六段每一段都还能报出来。每个测试都对应一个真实踩过的坑，不是为了覆盖率写的。测试里的例句是编的，保留真实句子的形状，不保留原话。
+63 个回归测试，不需要 pytest。其中一条专门跑 `examples/pairs.json`，确认上面六段每一段都还能报出来。每个测试都对应一个真实踩过的坑，不是为了覆盖率写的。测试里的例句是编的，保留真实句子的形状，不保留原话。
 
 ## Configuration / 配置
 

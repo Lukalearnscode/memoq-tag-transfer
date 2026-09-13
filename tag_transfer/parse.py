@@ -5,6 +5,19 @@ from lxml import etree
 from .extract import NS
 
 
+# Style names invented by one project's text system, not part of any standard.
+# A different project ships different names, so this is data, not control flow:
+# replace or extend PROJECT_STYLES instead of editing classify_tag. Anything
+# not listed here still resolves through _infer_unknown_tag.
+PROJECT_STYLES = {
+    "accent-gn": ("gn_open", "green highlight start"),
+    "physical": ("phys_open", "physical damage color start"),
+    "ItemQuality_5": ("q5_open", "skill link style start"),
+    "tipsYellow": ("tip_open", "tips title style start"),
+    "text_third_gray": ("gray_open", "gray description style start"),
+}
+
+
 def classify_tag(ph_element):
     """Identify the semantic type of a <ph> element. Returns (type, detail)."""
     rxt = ph_element.find("{MQXliff}rxt")
@@ -13,16 +26,9 @@ def classify_tag(ph_element):
 
     dt = rxt.get("displaytext", "")
 
-    if 'style="accent-gn"' in dt:
-        return ("gn_open", "green highlight start")
-    if 'style="physical"' in dt:
-        return ("phys_open", "physical damage color start")
-    if 'style="ItemQuality_5"' in dt:
-        return ("q5_open", "skill link style start")
-    if 'style="tipsYellow"' in dt:
-        return ("tip_open", "tips title style start")
-    if 'style="text_third_gray"' in dt:
-        return ("gray_open", "gray description style start")
+    for style_name, result in PROJECT_STYLES.items():
+        if f'style="{style_name}"' in dt:
+            return result
     if "</style>" in dt:
         return ("style_close", "style close")
     if "linktext=" in dt:

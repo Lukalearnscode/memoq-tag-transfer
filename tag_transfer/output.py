@@ -4,6 +4,12 @@ import re
 
 from lxml import etree
 
+from . import __version__
+
+
+class TmxValidationError(Exception):
+    """The generated TMX is not well-formed XML. Message is for humans."""
+
 
 def escape_xml(text):
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -12,11 +18,26 @@ def escape_xml(text):
 INLINE_TAG_NAMES = {"ph", "bpt", "ept", "x", "g"}
 
 
+_XMLNS_DECL_RE = re.compile(r'\s+xmlns:([\w.-]+)="[^"]*"')
+
+
 def _clean_xmlns(raw):
+    """Strip namespace noise lxml adds when serialising a subtree.
+
+    lxml prints every namespace that is in scope at the element, not only the
+    ones the fragment uses. Serialising a <ph> out of an mqxliff therefore
+    carries the file-level xmlns:mq along, and it lands on every tag in the
+    TMX. A declaration that IS used must stay: memoQ <ph> elements really do
+    contain <mq:rxt>, and dropping its declaration makes the fragment invalid.
+    """
     raw = raw.replace(' xmlns="urn:oasis:names:tc:xliff:document:1.2"', "")
+    raw = re.sub(r"<(/?)ns\d+:", r"<\1", raw)
     raw = re.sub(r' xmlns:ns\d+="[^"]*"', "", raw)
-    raw = re.sub(r"<ns\d+:", "<", raw)
-    raw = re.sub(r"</ns\d+:", "</", raw)
+    body = _XMLNS_DECL_RE.sub("", raw)
+    for prefix in set(_XMLNS_DECL_RE.findall(raw)):
+        used = re.search(rf"<{re.escape(prefix)}:|\s{re.escape(prefix)}:", body)
+        if not used:
+            raw = re.sub(rf'\s+xmlns:{re.escape(prefix)}="[^"]*"', "", raw)
     return raw
 
 
@@ -51,10 +72,37 @@ def build_full_seg(el):
 
 
 def build_tmx_seg(src_el, template):
-    """Replace {N} placeholders in template with actual tag XML from source."""
-    def replacer(m):
-        return get_tag_xml_str(src_el, m.group(1))
-    return re.sub(r"\{(\d+)\}", replacer, template)
+    """Replace {N} placeholders with tag XML; XML-escape everything around them.
+
+    The text between the placeholders is plain target text, so an "&" or "<"
+    in the translation has to be escaped or the whole TMX stops being
+    well-formed XML and memoQ refuses the import. Only the substituted tag XML
+    goes in raw. A placeholder whose tag cannot be found is left in place
+    (escaped) rather than silently dropped: a visible {N} in the TM beats a
+    tag that quietly disappeared.
+    """
+    out, pos = [], 0
+    for m in re.finditer(r"\{(\d+)\}", template):
+        out.append(escape_xml(template[pos:m.start()]))
+        tag_xml = get_tag_xml_str(src_el, m.group(1))
+        out.append(tag_xml if tag_xml else escape_xml(m.group(0)))
+        pos = m.end()
+    out.append(escape_xml(template[pos:]))
+    return "".join(out)
+
+
+def validate_tmx(path):
+    """Parse a written TMX back. Returns a list of problems, empty when fine.
+
+    The verifier checks the strings it holds in memory; nothing checked the
+    file that actually got written. An escaping bug therefore passed every
+    gate and only failed later, inside memoQ.
+    """
+    try:
+        etree.parse(str(path))
+        return []
+    except etree.XMLSyntaxError as exc:
+        return [f"generated TMX is not well-formed XML: {exc}"]
 
 
 def generate_tmx(results, output_path, src_lang="zh-CN", tgt_lang="en-US"):
@@ -72,7 +120,7 @@ def generate_tmx(results, output_path, src_lang="zh-CN", tgt_lang="en-US"):
     lines = [
         '<?xml version="1.0" encoding="utf-8"?>',
         '<tmx version="1.4">',
-        '  <header creationtool="memoq-tag-transfer" creationtoolversion="0.1.0"',
+        f'  <header creationtool="memoq-tag-transfer" creationtoolversion="{__version__}"',
         '          segtype="sentence" o-tmf="memoQ" adminlang="en-US"',
         f'          srclang="{src_lang}" datatype="plaintext"/>',
         "  <body>",
@@ -97,4 +145,11 @@ def generate_tmx(results, output_path, src_lang="zh-CN", tgt_lang="en-US"):
     with open(output_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
 
+    problems = validate_tmx(output_path)
+    if problems:
+        raise TmxValidationError(
+            f"{output_path} was written but cannot be parsed back: "
+            + "; ".join(problems)
+            + ". The file is kept on disk for inspection."
+        )
     return output_path

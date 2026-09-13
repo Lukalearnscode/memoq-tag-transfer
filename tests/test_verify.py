@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Regression tests for verify.py, semantic_report.py and pairs_io.py.
+"""Regression tests for the whole package: verify.py, semantic_report.py,
+pairs_io.py and the extract -> place -> output pipeline.
 
 Every test here exists because the bug it guards against reached a real
 file first. None was written for coverage. Where a test quotes an example
@@ -13,13 +14,34 @@ import re
 import subprocess
 import sys
 import tempfile
+import types
+import zipfile
 from pathlib import Path
+
+from lxml import etree
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from tag_transfer import verify as vt  # noqa: E402
 from tag_transfer import semantic_report as tsr  # noqa: E402
 from tag_transfer import pairs_io  # noqa: E402
+from tag_transfer import extract, output  # noqa: E402
+
+# place.py imports the openai SDK at module level. The package is only needed
+# for `transfer`, and these tests must run without it, so a stub stands in.
+sys.modules.setdefault("openai", types.ModuleType("openai")).OpenAI = lambda **kw: object()
+from tag_transfer import place  # noqa: E402
+
+XLIFF_NS = "urn:oasis:names:tc:xliff:document:1.2"
+
+
+def _source_el(inner: str):
+    """A <source> element inside a document that declares the mq namespace,
+    the shape lxml actually hands to output.py when reading an mqxliff."""
+    doc = etree.fromstring(
+        f'<xliff xmlns="{XLIFF_NS}" xmlns:mq="MQXliff"><source>{inner}</source></xliff>'
+        .encode("utf-8"))
+    return doc[0]
 
 
 # ── BBCode coverage ──────────────────────────────────────────────────────
@@ -522,6 +544,168 @@ def test_examples_file_is_a_working_demo():
     assert "empty target span" in sections["4"], sections["4"]      # 3
     assert "term mismatch" in sections["8"], sections["8"]          # glossary demo
     assert "⚠️" not in sections["1"] and "❌" not in sections["1"], sections["1"]
+
+
+# ── TMX output: escaping, namespaces, self-check ─────────────────────────
+# A real run produced a TMX whose source side was escaped and whose target
+# side was not. The file was not well-formed XML, so memoQ refused the
+# import — and every in-memory check had reported "all segments passed",
+# because nothing ever parsed the file that got written.
+
+def test_tmx_escapes_the_target_side():
+    """An & or < in the translation must not break the TMX."""
+    src = _source_el('A <ph id="1">&lt;b&gt;</ph>B')
+    seg = output.build_tmx_seg(src, "Salt {1} Pepper & 5 < 6")
+    assert "&amp;" in seg and "&lt; 6" in seg, seg
+    etree.fromstring(f"<seg>{seg}</seg>".encode("utf-8"))   # raises if broken
+
+
+def test_tmx_source_and_target_escape_the_same_way():
+    """The asymmetry was the bug: one side escaped, the other raw."""
+    src = _source_el("Tom &amp; Jerry")
+    assert output.build_full_seg(src) == output.escape_xml("Tom & Jerry")
+    assert output.build_tmx_seg(src, "Tom & Jerry") == output.escape_xml("Tom & Jerry")
+
+
+def test_unused_namespace_declaration_is_dropped():
+    """lxml prints every in-scope namespace; xmlns:mq landed on every tag."""
+    src = _source_el('x<ph id="1">&lt;b&gt;</ph>')
+    assert "xmlns:mq" not in output.get_tag_xml_str(src, "1")
+
+
+def test_used_namespace_declaration_is_kept():
+    """The mirror case: memoQ <ph> really does contain <mq:rxt>, and stripping
+    a declaration that IS used would make the fragment invalid."""
+    src = _source_el('<ph id="1"><mq:rxt displaytext="&lt;br&gt;"/></ph>')
+    tag = output.get_tag_xml_str(src, "1")
+    assert "mq:rxt" in tag and 'xmlns:mq="MQXliff"' in tag, tag
+    etree.fromstring(tag.encode("utf-8"))
+
+
+def test_missing_tag_leaves_a_visible_placeholder():
+    """A tag id with no match used to vanish silently. Silent loss is the one
+    failure this project treats as worse than a loud one."""
+    src = _source_el('x<ph id="1">&lt;b&gt;</ph>')
+    assert output.build_tmx_seg(src, "a {9} b") == "a {9} b"
+
+
+def test_generate_tmx_rejects_output_it_cannot_parse():
+    """The guard itself: break escaping on purpose, the writer must notice."""
+    src = _source_el("hi")
+    results = [{"src_el": src, "src_text": "hi", "tgt_template": "a & b"}]
+    original = output.escape_xml
+    output.escape_xml = lambda text: text          # reintroduce the old bug
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "broken.tmx"
+            try:
+                output.generate_tmx(results, str(out))
+            except output.TmxValidationError as exc:
+                assert "not well-formed" in str(exc), exc
+            else:
+                raise AssertionError("invalid TMX was written without complaint")
+    finally:
+        output.escape_xml = original
+
+
+def test_generate_tmx_writes_parseable_file():
+    src = _source_el(
+        'Deal <ph id="1">&lt;b&gt;</ph>50<ph id="2">&lt;/b&gt;</ph> damage &amp; heal')
+    results = [{"src_el": src, "src_text": "Deal {1}50{2} damage & heal",
+                "tgt_template": "Inflige {1}50{2} de dégâts & soigne"}]
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "ok.tmx"
+        output.generate_tmx(results, str(out))
+        assert output.validate_tmx(out) == []
+        assert f'creationtoolversion="{__import__("tag_transfer").__version__}"' \
+            in out.read_text(encoding="utf-8")
+
+
+# ── Placement: warnings must not travel inside the text ──────────────────
+# The warning used to be prepended to the returned string and the caller
+# recovered the text with split("\n")[-1]. Any genuinely multi-line target
+# lost everything above its last newline.
+
+def test_multiline_target_survives():
+    """split("\\n")[-1] returned only "second line" and lost the rest."""
+    tagged = "first line {1}\nsecond line"
+    assert place._strip_model_preamble(tagged, "first line\nsecond line") == tagged
+
+
+def test_model_preamble_is_stripped():
+    """The other job that split("\\n")[-1] was doing, kept on purpose."""
+    got = place._strip_model_preamble("Sure, here you go:\nHello {1} world", "Hello world")
+    assert got == "Hello {1} world", got
+
+
+def test_preamble_stripping_does_not_touch_a_reworded_target():
+    """When the reply matches neither shape, return it whole and let the tag
+    count report the problem. Guessing which line to keep is how content
+    disappears."""
+    odd = "I changed the wording {1} entirely"
+    assert place._strip_model_preamble(odd, "Hello world") == odd
+
+
+def test_place_tags_returns_warnings_separately():
+    """No tags to place: the text comes back untouched, warnings empty."""
+    assert place.place_tags("plain", [], "texte") == ("texte", [])
+
+
+# ── Auto-detected tag names are scoped to their batch ────────────────────
+
+def test_auto_detected_tags_do_not_leak_into_the_next_batch():
+    """verify_all wrote the names it detected into module state and never put
+    it back, so a second batch was checked against the first batch's tags."""
+    vt.set_custom_tags([])
+    try:
+        vt.verify_all([{"id": "1", "source": "[gold]x[/gold]", "target": "[gold]y[/gold]"}])
+        assert vt.custom_tags() == set(), vt.custom_tags()
+        leftover = vt.verify_all(
+            [{"id": "2", "source": "see [gold] below", "target": "see below"}],
+            auto_detect_tags=False)
+        assert leftover == [], [i.issue_type for i in leftover]
+    finally:
+        vt.set_custom_tags([])
+
+
+def test_explicit_tags_survive_a_batch():
+    """--tags is the caller's instruction; only auto-detection is batch-scoped."""
+    vt.set_custom_tags(["jitter"])
+    try:
+        vt.verify_all([{"id": "1", "source": "[gold]x[/gold]", "target": "[gold]y[/gold]"}])
+        assert vt.custom_tags() == {"jitter"}, vt.custom_tags()
+    finally:
+        vt.set_custom_tags([])
+
+
+def test_verify_all_rejects_a_missing_key():
+    """Callers that build pairs themselves skip pairs_io. Treating the missing
+    key as an empty string would report the segment clean, which is the silent
+    pass pairs_io exists to prevent."""
+    try:
+        vt.verify_all([{"id": "seg-7", "source": "plain text"}])
+    except pairs_io.PairsError as exc:
+        assert "seg-7" in str(exc) and "target" in str(exc), exc
+    else:
+        raise AssertionError("a record with no target key was reported clean")
+
+
+# ── Archive extraction stays inside the work dir ─────────────────────────
+
+def test_zip_slip_is_refused():
+    """An .mqxlz is a ZIP from outside the tool."""
+    with tempfile.TemporaryDirectory() as td:
+        td = Path(td)
+        bad = td / "evil.mqxlz"
+        with zipfile.ZipFile(bad, "w") as z:
+            z.writestr("../escaped.txt", "nope")
+        try:
+            extract.extract_mqxlz(str(bad), str(td / "wd"))
+        except ValueError as exc:
+            assert "outside" in str(exc), exc
+        else:
+            raise AssertionError("a member outside the work dir was extracted")
+        assert not (td.parent / "escaped.txt").exists()
 
 
 if __name__ == "__main__":
