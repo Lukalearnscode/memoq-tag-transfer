@@ -7,7 +7,8 @@ import sys
 
 from .extract import extract_mqxlz, parse_mqxliff
 from .parse import extract_segments
-from .output import generate_tmx, build_full_seg, build_tmx_seg
+from .output import (generate_tmx, build_full_seg, build_tmx_seg,
+                     TmxValidationError)
 from .pairs_io import PairsError, load_pairs, load_glossary
 from .verify import verify_all, verify_redaction_runs, set_custom_tags, print_report
 
@@ -41,8 +42,8 @@ def cmd_analyze(args):
     print(f"Total: {len(segments)} segments, showing {len(selected)}")
 
 
-def cmd_transfer(args):
-    """Transfer tags from source to target and generate TMX."""
+def cmd_transfer(args) -> int:
+    """Transfer tags from source to target and generate TMX. Returns the exit code."""
     # Imported here so that `analyze` and `verify` work without the openai
     # package or an API key.
     from .place import place_tags, get_client, get_model
@@ -64,20 +65,24 @@ def cmd_transfer(args):
 
         print(f"  Row {i}: {len(seg['src_tags'])} tags ... ", end="", flush=True)
         try:
-            tagged = place_tags(
+            tagged, warnings = place_tags(
                 seg["src_text"], seg["src_tags"], seg["tgt_text"],
                 client=client, model=model,
             )
-            if tagged.startswith("⚠️"):
-                print("TAG MISMATCH")
-                errors.append((i, tagged))
+            if warnings:
+                print("TAG MISMATCH" + (", skipped" if args.strict else ""))
+                errors.append((i, f"TAG MISMATCH ({', '.join(warnings)})"))
+                # A TM is reused for years. --strict keeps a segment whose tags
+                # are already known to be wrong out of it.
+                if args.strict:
+                    continue
             else:
                 print("OK")
             results.append({
                 "id": seg["id"],
                 "src_el": seg["src_el"],
                 "src_text": seg["src_text"],
-                "tgt_template": tagged.split("\n")[-1],
+                "tgt_template": tagged,
             })
         except Exception as e:
             print(f"ERROR: {e}")
@@ -85,7 +90,11 @@ def cmd_transfer(args):
 
     if results:
         output_path = args.output or os.path.splitext(args.input)[0] + ".tmx"
-        generate_tmx(results, output_path, args.src_lang, args.tgt_lang)
+        try:
+            generate_tmx(results, output_path, args.src_lang, args.tgt_lang)
+        except TmxValidationError as exc:
+            print(f"\nerror: {exc}", file=sys.stderr)
+            return 1
         print(f"\nTMX written: {output_path} ({len(results)} segments)")
 
         verify_pairs = []
@@ -102,6 +111,8 @@ def cmd_transfer(args):
         print(f"\n⚠️  {len(errors)} segments had issues:")
         for row, msg in errors:
             print(f"  Row {row}: {msg[:100]}")
+        return 1
+    return 0
 
 
 def _pairs_for_verify(args):
@@ -123,15 +134,15 @@ def cmd_verify(args) -> int:
     try:
         pairs = _pairs_for_verify(args)
         glossary = load_glossary(args.glossary) if args.glossary else []
+
+        if args.tags:
+            set_custom_tags(args.tags.split(","))
+
+        issues = verify_all(pairs, auto_detect_tags=not args.no_auto_tags)
+        issues += verify_redaction_runs(pairs)
     except PairsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-
-    if args.tags:
-        set_custom_tags(args.tags.split(","))
-
-    issues = verify_all(pairs, auto_detect_tags=not args.no_auto_tags)
-    issues += verify_redaction_runs(pairs)
 
     if args.format == "json":
         print(json.dumps({
@@ -177,6 +188,10 @@ def main():
     p_transfer.add_argument("--src-lang", default="zh-CN", help="Source language (default: zh-CN)")
     p_transfer.add_argument("--tgt-lang", default="en-US", help="Target language (default: en-US)")
     p_transfer.add_argument("--work-dir", help="Temp directory for extraction")
+    p_transfer.add_argument(
+        "--strict", action="store_true",
+        help="Leave segments whose tag count does not match out of the TMX "
+             "(default: write them anyway and report them)")
 
     # verify
     p_verify = sub.add_parser(
@@ -209,7 +224,7 @@ def main():
     if args.command == "analyze":
         cmd_analyze(args)
     elif args.command == "transfer":
-        cmd_transfer(args)
+        sys.exit(cmd_transfer(args))
     elif args.command == "verify":
         sys.exit(cmd_verify(args))
     else:

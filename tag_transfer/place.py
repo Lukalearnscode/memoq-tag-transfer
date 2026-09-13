@@ -1,6 +1,8 @@
 """Place tags from source into target text using an LLM."""
 
 import os
+import re
+from collections import Counter
 
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -46,6 +48,43 @@ def get_model():
     )
 
 
+_PLACEHOLDER_RE = re.compile(r"\{(\d+)\}")
+
+
+def _tag_counts(text):
+    return Counter(m.group(1) for m in _PLACEHOLDER_RE.finditer(text))
+
+
+def _bare_text(text):
+    """The text with placeholders and all whitespace removed."""
+    return re.sub(r"\s+", "", _PLACEHOLDER_RE.sub("", text))
+
+
+def _strip_model_preamble(result, tgt_text):
+    """Drop a chatty model's leading lines, anchored on the target text.
+
+    The old code took the last line unconditionally, which also truncated a
+    genuinely multi-line translation down to its final line — everything
+    above the last newline was lost silently.
+
+    The anchor is this module's own rule: the plain text of the target must
+    not change, only tags are inserted. So the answer, minus its placeholders,
+    has to be the target text again. When the whole reply satisfies that it is
+    returned untouched (a real multi-line target does). When it does not, but
+    dropping leading lines makes it so, those lines were the model talking to
+    us rather than translating.
+    """
+    want = _bare_text(tgt_text)
+    if _bare_text(result) == want:
+        return result
+    lines = result.split("\n")
+    for i in range(1, len(lines)):
+        tail = "\n".join(lines[i:])
+        if _bare_text(tail) == want:
+            return tail
+    return result
+
+
 def place_tags(src_text, src_tags, tgt_text, client=None, model=None):
     """Use LLM to place tags from source into target text.
 
@@ -55,10 +94,13 @@ def place_tags(src_text, src_tags, tgt_text, client=None, model=None):
         tgt_text: Plain target text without tags
 
     Returns:
-        Tagged target text with {N} placeholders inserted
+        (tagged_text, warnings) — warnings is a list of human-readable strings,
+        empty when the tag inventory matches. The warning used to be prepended
+        to the returned text, which made the caller strip it off again by
+        string surgery; that surgery is what ate multi-line targets.
     """
     if not src_tags:
-        return tgt_text
+        return tgt_text, []
 
     if client is None:
         client = get_client()
@@ -90,20 +132,17 @@ Place all tags into the target text. Output ONLY the tagged text."""
     )
     result = response.choices[0].message.content.strip()
 
-    import re
-    from collections import Counter
-
+    result = _strip_model_preamble(result, tgt_text)
     expected = Counter(t["id"] for t in src_tags)
-    found = Counter(m.group(1) for m in re.finditer(r"\{(\d+)\}", result))
+    found = _tag_counts(result)
 
+    warnings = []
     if found != expected:
         missing = expected - found
         extra = found - expected
-        warnings = []
         if missing:
             warnings.append(f"missing tags: {dict(missing)}")
         if extra:
             warnings.append(f"extra tags: {dict(extra)}")
-        result = f"⚠️ TAG MISMATCH ({', '.join(warnings)})\n{result}"
 
-    return result
+    return result, warnings

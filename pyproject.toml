@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memoq-tag-transfer"
-version = "0.3.0"
+dynamic = ["version"]
 description = "Transfer inline tags from source to target in memoQ mqxlz files, output TMX"
 readme = "README.md"
 license = "MIT"
@@ -17,3 +17,6 @@ dependencies = [
 
 [project.scripts]
 memoq-tag-transfer = "tag_transfer.cli:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "tag_transfer.__version__"}
