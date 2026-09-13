@@ -742,6 +742,47 @@ def test_ph_without_any_rxt_stays_unknown():
     assert parse.classify_tag(el) == ("unknown", "plain content")
 
 
+# ── TMX spelling of inline tags ──────────────────────────────────────────
+# The tags are read out of an mqxliff, so they arrive spelled the XLIFF way.
+# Written into a TMX unchanged they carry id/rid, which are not TMX
+# attributes, and bpt/ept lose "i", which TMX requires and pairs them by.
+
+def test_tmx_output_uses_tmx_attribute_spelling():
+    src = _source_el(
+        '<bpt id="1" rid="7">&lt;b&gt;</bpt>word<ept id="2" rid="7">&lt;/b&gt;</ept>'
+        '<ph id="3">&lt;br&gt;</ph>')
+    seg = output.build_full_seg(src, tmx_spelling=True)
+    assert '<bpt i="7" x="1">' in seg, seg
+    assert '<ept i="7">' in seg, seg
+    assert '<ph x="3">' in seg, seg
+    assert "rid=" not in seg and ' id="' not in seg, seg
+
+
+def test_standalone_x_becomes_a_ph():
+    """TMX has no <x/>; a standalone placeholder is a ph."""
+    src = _source_el('a<x id="5"/>b')
+    assert '<ph x="5"/>' in output.build_full_seg(src, tmx_spelling=True)
+
+
+def test_verification_still_reads_the_xliff_spelling():
+    """The rewrite is an output-format concern. verify compares the mqxliff's
+    own tags, so the default must stay untouched."""
+    src = _source_el('<bpt id="1" rid="7">&lt;b&gt;</bpt>w<ept id="2" rid="7">&lt;/b&gt;</ept>')
+    seg = output.build_full_seg(src)
+    assert '<bpt id="1" rid="7">' in seg and '<ept id="2" rid="7">' in seg, seg
+
+
+def test_tu_carries_the_segment_id():
+    """The id was collected through the whole pipeline and then dropped."""
+    src = _source_el("hello")
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "t.tmx"
+        output.generate_tmx(
+            [{"id": "seg-42", "src_el": src, "src_text": "hello", "tgt_template": "bonjour"}],
+            str(out))
+        assert '<tu tuid="seg-42">' in out.read_text(encoding="utf-8")
+
+
 if __name__ == "__main__":
     # Discovered automatically, not listed by hand: a hardcoded call list
     # silently skips any test added later.
