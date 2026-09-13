@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO))
 from tag_transfer import verify as vt  # noqa: E402
 from tag_transfer import semantic_report as tsr  # noqa: E402
 from tag_transfer import pairs_io  # noqa: E402
-from tag_transfer import extract, output  # noqa: E402
+from tag_transfer import extract, output, parse  # noqa: E402
 
 # place.py imports the openai SDK at module level. The package is only needed
 # for `transfer`, and these tests must run without it, so a stub stands in.
@@ -706,6 +706,40 @@ def test_zip_slip_is_refused():
         else:
             raise AssertionError("a member outside the work dir was extracted")
         assert not (td.parent / "escaped.txt").exists()
+
+
+# ── memoQ writes the rxt two ways ────────────────────────────────────────
+# Only the child-element form was handled. On a real UI file written the
+# other way, find("{MQXliff}rxt") returned None for every <ph> and 1323 tags
+# — every line break in the file — classified as "unknown". place.py then
+# described them to the model as "unknown" plus a line of raw XML.
+
+def test_rxt_as_child_element_is_classified():
+    el = etree.fromstring(
+        b'<ph xmlns:mq="MQXliff" id="1"><mq:rxt displaytext="&lt;br&gt;"/></ph>')
+    assert parse.classify_tag(el) == ("br", "line break")
+
+
+def test_rxt_as_escaped_text_is_classified():
+    """The shape memoQ actually wrote: the whole rxt escaped inside the ph."""
+    el = etree.fromstring(
+        b'<ph id="2">&lt;mq:rxt displaytext=&quot;&amp;lt;br&amp;gt;&quot; '
+        b'val=&quot;&amp;lt;br&amp;gt;&quot;&gt;</ph>')
+    assert parse.classify_tag(el) == ("br", "line break")
+
+
+def test_escaped_rxt_still_resolves_a_project_style():
+    """A style name survives the extra level of escaping its quotes take."""
+    el = etree.fromstring(
+        b'<ph id="3">&lt;mq:rxt displaytext=&quot;&amp;lt;style='
+        b'&amp;quot;accent-gn&amp;quot;&amp;gt;&quot;&gt;</ph>')
+    assert parse.classify_tag(el) == parse.PROJECT_STYLES["accent-gn"]
+
+
+def test_ph_without_any_rxt_stays_unknown():
+    """Only an rxt is evidence. Anything else keeps the old fallback."""
+    el = etree.fromstring(b'<ph id="4">plain content</ph>')
+    assert parse.classify_tag(el) == ("unknown", "plain content")
 
 
 if __name__ == "__main__":

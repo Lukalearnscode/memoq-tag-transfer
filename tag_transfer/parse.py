@@ -1,5 +1,8 @@
 """Parse trans-units: extract source/target text and classify inline tags."""
 
+import html
+import re
+
 from lxml import etree
 
 from .extract import NS
@@ -18,13 +21,41 @@ PROJECT_STYLES = {
 }
 
 
+_DISPLAYTEXT_RE = re.compile(r'displaytext="([^"]*)"')
+
+
+def rxt_displaytext(ph_element):
+    """The rxt displaytext of a <ph>, or None when there is no rxt at all.
+
+    memoQ writes the rxt two ways and both turn up in real files: as a child
+    element, and as escaped text inside the <ph>:
+
+        <ph id="3">&lt;mq:rxt displaytext=&quot;&amp;lt;br&amp;gt;&quot; ...&gt;</ph>
+
+    Only the child form was handled, so on a file written the second way
+    find() returned None and every single <ph> classified as "unknown" —
+    1323 of them on one real UI file, every <br> and <strong> among them.
+    The LLM then got "unknown" plus a line of raw XML where it should have
+    read "line break".
+
+    Both forms are unescaped to the same string, so the callers below can
+    keep matching on plain "<br>" and 'style="..."'.
+    """
+    rxt = ph_element.find("{MQXliff}rxt")
+    if rxt is not None:
+        return rxt.get("displaytext", "")
+    text = ph_element.text or ""
+    if "mq:rxt" not in text:
+        return None
+    m = _DISPLAYTEXT_RE.search(text)
+    return html.unescape(m.group(1)) if m else ""
+
+
 def classify_tag(ph_element):
     """Identify the semantic type of a <ph> element. Returns (type, detail)."""
-    rxt = ph_element.find("{MQXliff}rxt")
-    if rxt is None:
+    dt = rxt_displaytext(ph_element)
+    if dt is None:
         return ("unknown", ph_element.text or "")
-
-    dt = rxt.get("displaytext", "")
 
     for style_name, result in PROJECT_STYLES.items():
         if f'style="{style_name}"' in dt:
