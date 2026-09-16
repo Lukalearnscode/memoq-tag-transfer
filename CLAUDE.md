@@ -19,9 +19,10 @@ extract.py → parse.py → place.py → verify.py → output.py
 2. `parse.py` — Walks `<trans-unit>` elements, classifies inline tags (`ph`, `bpt`, `ept`, `x`, `g`) by their attributes. Outputs simplified text with `{N}` placeholders.
 3. `place.py` — Sends source (with `{N}` placeholders) + plain target to an LLM. The LLM inserts `{N}` markers into the target at correct positions. Validates tag count with Counter-based matching.
 4. `verify.py` — Post-placement verification, segment by segment. See "What verify checks" below.
-5. `output.py` — Replaces `{N}` placeholders with real tag XML from source. Rewrites the
-   tags from XLIFF spelling into TMX spelling, generates the TMX, then parses the written
-   file back (`validate_tmx`) before reporting success.
+5. `output.py` — Replaces `{N}` placeholders with real tag XML from source. Rewrites every
+   inline tag into the one shape memoQ has actually imported (`<ph x="ID">` holding a
+   self-closing rxt), generates the TMX, then parses the written file back and scans it
+   for the shapes memoQ rejects (`validate_tmx`) before reporting success.
 
 Two modules outside the linear pipeline:
 
@@ -30,7 +31,7 @@ Two modules outside the linear pipeline:
 
 Entry point: `cli.py` (three subcommands: `analyze`, `transfer`, `verify`). `place.py` (and therefore the `openai` package) is imported lazily inside `transfer`, so `analyze` and `verify` work without an API key.
 
-Tests: `python3 tests/test_verify.py` — plain script, no pytest needed, auto-discovers `test_*` functions in its own module namespace (a hardcoded call list silently skips new tests). 71 tests, covering the output/place/extract path as well as the verifiers. `openai` is stubbed there, so the suite runs without the SDK. Every example segment in the tests is made up; it keeps the shape of a real bug, not the real words. `test_examples_file_is_a_working_demo` runs `examples/pairs.json` and asserts each README gallery case still fires; keep it in sync when editing either.
+Tests: `python3 tests/test_verify.py` — plain script, no pytest needed, auto-discovers `test_*` functions in its own module namespace (a hardcoded call list silently skips new tests). 76 tests, covering the output/place/extract path as well as the verifiers. `openai` is stubbed there, so the suite runs without the SDK. Every example segment in the tests is made up; it keeps the shape of a real bug, not the real words. `test_examples_file_is_a_working_demo` runs `examples/pairs.json` and asserts each README gallery case still fires; keep it in sync when editing either.
 
 ## What verify checks
 
@@ -75,13 +76,25 @@ Design decisions worth knowing before changing any of it:
 - **A warning must never travel inside the returned text** — `place_tags` returns
   `(text, warnings)`. When the warning was prepended to the string, the caller recovered the
   text with `split("\n")[-1]`, which truncated every multi-line target to its last line.
-- **A TMX must use TMX tag spelling, not XLIFF's** — the tags come out of an mqxliff, so
-  they arrive as `<ph id=>`, `<bpt id= rid=>`, `<ept id= rid=>`. TMX identifies a `ph` by
-  `x`, pairs a `bpt`/`ept` through `i` (which it requires), and has no `id`/`rid` at all.
-  `build_full_seg`/`build_tmx_seg` take `tmx_spelling=True` on the way into a file; the
-  default stays XLIFF because verification compares the mqxliff's own tags.
-- **`<tu>` carries `tuid`** — the segment id is what keeps a TM entry traceable back to the
-  file it came from. It was collected through the whole pipeline and then dropped.
+- **Write the TMX in the shape memoQ imports, not the shape the TMX spec prefers** — every
+  `ph`/`bpt`/`ept` becomes `<ph x="ID">` (x = the tag's own id, never `rid`) whose rxt is made
+  self-closing; `<x/>` becomes `<ph x="ID"/>`; the root declares `xmlns:mq="MQXliff"`. This is
+  the only shape that has been through a real memoQ import (twice, same real 457-segment
+  file). The spec-conformant `<bpt i="1" x="1">`/`<ept i="1">` rendering, carrying memoQ's
+  two rxt halves, is a well-formed TMX that memoQ refused without naming a line: unescaped,
+  the closing half `</mq:rxt displaytext="…">` is a closing tag with attributes, and memoQ
+  re-parses each tag's content on import. `build_full_seg`/`build_tmx_seg` take
+  `memoq_shape=True` on the way into a file; the default stays the mqxliff's own spelling
+  because verification compares against the source. Do not change the output shape without
+  importing a file into memoQ first — a green test suite says nothing about that.
+- **A well-formed TMX is not an importable TMX** — `validate_tmx` parses the file back AND
+  scans it for the three shapes a real import refused (bpt/ept, a closing-half rxt, an rxt
+  that is not self-closing). A test that exercises this guard must go through
+  `generate_tmx`, not the helper.
+- **Header, `<tu>` and `<tuv>` carry `creationdate`/`creationid`** (plus `changedate`/
+  `changeid` on `tu` and the target `tuv`), `o-tmf` is `TMX`, and `tuid` is the segment id.
+  TMX 1.4 makes the dates optional; memoQ reads them when it indexes the TM, and a file
+  without them showed up as "cannot be opened" with no further detail.
 - **Never hardcode API keys** — read from environment / `.env` only. Do not leave a key as a fallback default (`os.environ.get("KEY", "sk-...")` looks safe and is not).
 - **Tests that guard a check must go through the real entry point** (`verify_all` or the CLI), not only the helper function. A test that calls the helper directly stays green when the call site is deleted.
 - **When syncing code in from a private pipeline** — `verify.py`, `semantic_report.py`, `pairs_io.py` and `tests/` originate from a private localization pipeline. Anything ported in must be scrubbed of client names, project names and real segment text before commit. Comments that cite a real bug keep the lesson and drop the identifier: "on a real 525-tag file", not the game's name. Example segments are rewritten to keep the shape, not the words. Grep the diff for client names before pushing, not after.

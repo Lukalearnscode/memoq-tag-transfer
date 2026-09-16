@@ -742,45 +742,140 @@ def test_ph_without_any_rxt_stays_unknown():
     assert parse.classify_tag(el) == ("unknown", "plain content")
 
 
-# ── TMX spelling of inline tags ──────────────────────────────────────────
-# The tags are read out of an mqxliff, so they arrive spelled the XLIFF way.
-# Written into a TMX unchanged they carry id/rid, which are not TMX
-# attributes, and bpt/ept lose "i", which TMX requires and pairs them by.
+# ── The TMX shape memoQ imports ──────────────────────────────────────────
+# Every ph/bpt/ept becomes <ph x="ID"> holding a self-closing rxt. This is the
+# one shape that has been through a real memoQ import (twice, same real file);
+# the TMX-1.4-conformant <bpt i=>/<ept i=> rendering is what memoQ refused.
+# The sentences below are invented; the tag storage is copied from real files
+# (quotes as &quot;, angle brackets escaped twice).
 
-def test_tmx_output_uses_tmx_attribute_spelling():
+_RXT_OPEN = '&lt;mq:rxt displaytext=&quot;&amp;lt;strong&amp;gt;&quot; val=&quot;&amp;lt;strong&amp;gt;&quot;&gt;'
+_RXT_CLOSE = '&lt;/mq:rxt displaytext=&quot;&amp;lt;/strong&amp;gt;&quot; val=&quot;&amp;lt;/strong&amp;gt;&quot;&gt;'
+_RXT_BR = '&lt;mq:rxt displaytext=&quot;&amp;lt;br&amp;gt;&quot; val=&quot;&amp;lt;br&amp;gt;&quot; /&gt;'
+
+_EXPECTED_STRONG_OPEN = (
+    '<ph x="1">&lt;mq:rxt displaytext="&amp;lt;strong&amp;gt;" '
+    'val="&amp;lt;strong&amp;gt;" /&gt;</ph>')
+_EXPECTED_STRONG_CLOSE = (
+    '<ph x="2">&lt;mq:rxt displaytext="&amp;lt;/strong&amp;gt;" '
+    'val="&amp;lt;/strong&amp;gt;" /&gt;</ph>')
+_EXPECTED_BR = (
+    '<ph x="3">&lt;mq:rxt displaytext="&amp;lt;br&amp;gt;" '
+    'val="&amp;lt;br&amp;gt;" /&gt;</ph>')
+
+
+def test_tmx_output_matches_the_shape_memoq_imported():
+    """Byte-for-byte the form of the file that went through memoQ: a bpt/ept
+    pair becomes two standalone <ph>, each rxt self-closing, x = own id."""
     src = _source_el(
-        '<bpt id="1" rid="7">&lt;b&gt;</bpt>word<ept id="2" rid="7">&lt;/b&gt;</ept>'
-        '<ph id="3">&lt;br&gt;</ph>')
-    seg = output.build_full_seg(src, tmx_spelling=True)
-    assert '<bpt i="7" x="1">' in seg, seg
-    assert '<ept i="7">' in seg, seg
-    assert '<ph x="3">' in seg, seg
-    assert "rid=" not in seg and ' id="' not in seg, seg
+        f'<bpt id="1" rid="1">{_RXT_OPEN}</bpt>Rest here<ept id="2" rid="1">{_RXT_CLOSE}</ept>'
+        f'<ph id="3">{_RXT_BR}</ph>Then go on')
+    seg = output.build_full_seg(src, memoq_shape=True)
+    assert seg == (_EXPECTED_STRONG_OPEN + "Rest here" + _EXPECTED_STRONG_CLOSE
+                   + _EXPECTED_BR + "Then go on"), seg
+
+
+def test_tmx_output_has_no_shape_memoq_rejects():
+    """The three shapes a real import refused: bpt/ept, a closing-half rxt,
+    an rxt that is not self-closing."""
+    src = _source_el(
+        f'<bpt id="1" rid="1">{_RXT_OPEN}</bpt>w<ept id="2" rid="1">{_RXT_CLOSE}</ept>')
+    seg = output.build_full_seg(src, memoq_shape=True)
+    assert not re.search(r"<(?:bpt|ept)\b", seg), seg
+    assert "&lt;/mq:rxt" not in seg, seg
+    assert seg.count("&lt;mq:rxt") == seg.count(" /&gt;") == 2, seg
+    assert "rid=" not in seg and ' id="' not in seg and ' i="' not in seg, seg
+
+
+def test_both_rxt_storage_forms_write_the_same_tag():
+    """memoQ stores the rxt as escaped text or as a child element. The TMX
+    must not care: same tag either way, and the child form must not drag an
+    xmlns declaration (or an undeclared prefix) into the file."""
+    as_text = _source_el(f'<ph id="3">{_RXT_BR}</ph>')
+    as_child = _source_el(
+        '<ph id="3"><mq:rxt displaytext="&lt;br&gt;" val="&lt;br&gt;"/></ph>')
+    a = output.build_full_seg(as_text, memoq_shape=True)
+    b = output.build_full_seg(as_child, memoq_shape=True)
+    assert a == b == _EXPECTED_BR, (a, b)
+
+
+def test_child_element_rxt_survives_generate_tmx():
+    """The child form used to reach the file as a raw <mq:rxt> with its
+    declaration stripped, and the self-check refused every such file."""
+    src = _source_el('a<ph id="1"><mq:rxt displaytext="&lt;br&gt;" val="&lt;br&gt;"/></ph>b')
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "child.tmx"
+        output.generate_tmx(
+            [{"id": "s1", "src_el": src, "src_text": "a{1}b", "tgt_template": "x{1}y"}],
+            str(out))
+        text = out.read_text(encoding="utf-8")
+    assert text.count(_EXPECTED_BR.replace('x="3"', 'x="1"')) == 2, text
 
 
 def test_standalone_x_becomes_a_ph():
     """TMX has no <x/>; a standalone placeholder is a ph."""
     src = _source_el('a<x id="5"/>b')
-    assert '<ph x="5"/>' in output.build_full_seg(src, tmx_spelling=True)
+    assert '<ph x="5"/>' in output.build_full_seg(src, memoq_shape=True)
+
+
+def test_selfclose_inner_only_touches_tag_shaped_content():
+    f = output._selfclose_inner
+    assert f('</mq:rxt displaytext="a" val="b">') == '<mq:rxt displaytext="a" val="b" />'
+    assert f('<mq:rxt val="b">') == '<mq:rxt val="b" />'
+    assert f('<mq:rxt val="b" />') == '<mq:rxt val="b" />'
+    assert f('<mq:rxt val="b"/>') == '<mq:rxt val="b" />'
+    assert f('{1}') == '{1}'
+    assert f('foo bar') == 'foo bar'
 
 
 def test_verification_still_reads_the_xliff_spelling():
-    """The rewrite is an output-format concern. verify compares the mqxliff's
-    own tags, so the default must stay untouched."""
+    """The memoQ shape is an output-format concern. verify compares the
+    mqxliff's own tags, so the default must stay untouched."""
     src = _source_el('<bpt id="1" rid="7">&lt;b&gt;</bpt>w<ept id="2" rid="7">&lt;/b&gt;</ept>')
     seg = output.build_full_seg(src)
     assert '<bpt id="1" rid="7">' in seg and '<ept id="2" rid="7">' in seg, seg
 
 
-def test_tu_carries_the_segment_id():
-    """The id was collected through the whole pipeline and then dropped."""
+def test_generate_tmx_refuses_a_shape_memoq_rejects():
+    """The guard through the real entry point: disable the downgrade's inner
+    normalisation and the writer must refuse the file it just wrote."""
+    src = _source_el(f'<bpt id="1" rid="1">{_RXT_OPEN}</bpt>w<ept id="2" rid="1">{_RXT_CLOSE}</ept>')
+    results = [{"id": "s1", "src_el": src, "src_text": "{1}w{2}", "tgt_template": "{1}v{2}"}]
+    original = output._selfclose_inner
+    output._selfclose_inner = lambda inner: inner
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "poison.tmx"
+            try:
+                output.generate_tmx(results, str(out))
+            except output.TmxValidationError as exc:
+                assert "memoQ" in str(exc) and "closing-half" in str(exc), exc
+                assert out.exists(), "the file must be kept for inspection"
+            else:
+                raise AssertionError("a TMX memoQ rejects was written without complaint")
+    finally:
+        output._selfclose_inner = original
+
+
+def test_tmx_root_header_tu_and_tuv_carry_memoq_metadata():
+    """What the imported file had: xmlns:mq on the root, o-tmf TMX, and
+    creationdate/creationid on header, tu and tuv (change* on tu and target).
+    memoQ reads them when it indexes the TM."""
     src = _source_el("hello")
     with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "t.tmx"
+        out = Path(td) / "meta.tmx"
         output.generate_tmx(
             [{"id": "seg-42", "src_el": src, "src_text": "hello", "tgt_template": "bonjour"}],
-            str(out))
-        assert '<tu tuid="seg-42">' in out.read_text(encoding="utf-8")
+            str(out), "en-US", "fr-FR", creation_id="me", stamp="20260101T000000Z")
+        text = out.read_text(encoding="utf-8")
+    assert '<tmx version="1.4" xmlns:mq="MQXliff">' in text, text
+    assert 'o-tmf="TMX"' in text and 'creationdate="20260101T000000Z" creationid="me">' in text, text
+    assert ('<tu tuid="seg-42" creationdate="20260101T000000Z" creationid="me" '
+            'changedate="20260101T000000Z" changeid="me">') in text, text
+    assert '<tuv xml:lang="en-US" creationdate="20260101T000000Z" creationid="me">' in text, text
+    assert ('<tuv xml:lang="fr-FR" creationdate="20260101T000000Z" creationid="me" '
+            'changedate="20260101T000000Z" changeid="me">') in text, text
+    etree.fromstring(text.encode("utf-8"))
 
 
 if __name__ == "__main__":
